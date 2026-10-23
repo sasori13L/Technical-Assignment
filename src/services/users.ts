@@ -1,5 +1,4 @@
 import { getSupabase } from '@/lib/supabase/client';
-import { unwrap, unwrapRow } from '@/lib/errors';
 import type { AppUser, UserRole, UserWithVessels, Page } from '@/lib/types';
 import type { UserInput } from '@/lib/validation';
 import { pageRange, runPage, sanitizeSearch } from './common';
@@ -27,13 +26,21 @@ export async function listUsers(f: UserFilters): Promise<Page<UserWithVessels>> 
 }
 
 export async function createUser(input: UserInput): Promise<AppUser> {
-  const res = await getSupabase().from('users').insert({ ...input, is_active: true }).select().single();
-  return unwrap(res) as AppUser;
+  const res = await fetch('/api/admin/users', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input),
+  });
+  const body = await res.json().catch(() => ({})) as { user?: AppUser; error?: string };
+  if (!res.ok || !body.user) throw new Error(body.error ?? 'Could not invite the user.');
+  return body.user;
 }
 
 export async function updateUser(id: string, patch: Partial<UserInput> & { is_active?: boolean }): Promise<AppUser> {
-  const res = await getSupabase().from('users').update(patch).eq('id', id).select().maybeSingle();
-  return unwrapRow(res, 'User not found, or you do not have permission to change it.') as AppUser;
+  const res = await fetch('/api/admin/users', {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, patch }),
+  });
+  const body = await res.json().catch(() => ({})) as { user?: AppUser; error?: string };
+  if (!res.ok || !body.user) throw new Error(body.error ?? 'Could not update the user.');
+  return body.user;
 }
 
 /** Active Captains and Crew, for the assignment picker. Admins need no assignment. */

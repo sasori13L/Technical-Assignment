@@ -1,190 +1,104 @@
 # Deployment guide
 
-This guide deploys FleetOps with Supabase and Vercel. The finished submission should have:
+FleetOps uses Supabase Auth, Postgres RLS, and Vercel. Authentication credentials are owned by Supabase Auth; application roles and vessel assignments remain in `public.users` and related tables.
 
-- A public GitHub repository
-- A working production URL that opens without a login
-- The database schema in `supabase/schema.sql`
-- The Entity Relationship Diagram (ERD) in `README.md`
+## 1. Create or migrate the database
 
-## Before you start
-
-You need:
-
-- Node.js 20.9 or newer
-- A Supabase account
-- A GitHub account
-- A Vercel account
-
-Install the project dependencies:
-
-```bash
-npm install
-```
-
-## 1. Create the Supabase database
-
-Create a new Supabase project, then open its SQL Editor.
-
-Run these files in order:
+For a fresh Supabase project, run:
 
 1. `supabase/schema.sql`
 2. `supabase/seed.sql`
 
-The scripts are intended for a fresh project. The schema creates the tables, constraints, indexes, triggers, grants, and Row Level Security policies. The seed adds the demo vessels, users, assignments, and work orders used by the member switcher and deployment test.
+For an existing deployment that already has the mock-auth schema, apply:
 
-After both scripts finish, confirm that these five tables exist and have RLS enabled:
-
-- `users`
-- `vessels`
-- `vessel_assignments`
-- `work_orders`
-- `work_order_events`
-
-## 2. Get the Supabase settings
-
-Copy these values from the Supabase project settings:
-
-| Setting | Environment variable | Notes |
-| --- | --- | --- |
-| Project URL | `NEXT_PUBLIC_SUPABASE_URL` | Looks like `https://project-ref.supabase.co`. |
-| Publishable or legacy anon key | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Safe to use in the browser. Never use a secret or `service_role` key here. |
-| Legacy JWT secret | `SUPABASE_JWT_SECRET` | Server-only. Never commit or expose it. |
-
-This project uses a mock member switcher instead of Supabase Auth. The `/api/session` route signs short-lived HS256 tokens with the legacy JWT secret so the database can apply the correct RLS policies.
-
-Do not revoke or rotate away from the legacy JWT secret while this implementation depends on it. If your project does not provide an extractable legacy JWT secret, the session-signing implementation must be updated before deployment.
-
-## 3. Test locally
-
-Copy the example environment file:
-
-```bash
-cp .env.example .env.local
+```text
+supabase/migrations/20261023000000_supabase_auth.sql
 ```
 
-Add the three Supabase values to `.env.local`:
+The migration adds `public.users.auth_user_id`, changes identity resolution to `auth.uid()`, installs the Auth-profile linking trigger, and removes the anonymous switcher RPCs.
+
+## 2. Configure Supabase Auth
+
+In Authentication settings:
+
+1. Enable Email/Password authentication.
+2. Set the Site URL to the production application URL.
+3. Add `http://localhost:3000/**` for local development.
+4. Add the exact production callback URL and any approved Vercel preview pattern.
+5. Configure production SMTP and review invitation, confirmation, and recovery templates.
+6. Disable public sign-up if accounts should be invitation-only.
+
+Invite an existing seeded Admin email from the Supabase Auth dashboard. The `auth.users` trigger links a new Auth account to the existing profile when their normalized emails match. After that administrator signs in, new users can be invited from FleetOps.
+
+Recommended confirmation-link template target:
+
+```text
+{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type={{ .Type }}&next=/update-password
+```
+
+Use Supabase's current template variables for the selected email flow; verify invitation and recovery links in a staging project before production.
+
+## 3. Environment variables
+
+Create `.env.local`:
 
 ```bash
 NEXT_PUBLIC_SUPABASE_URL=https://YOUR-PROJECT-REF.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=YOUR-PUBLISHABLE-OR-ANON-KEY
-SUPABASE_JWT_SECRET=YOUR-LEGACY-JWT-SECRET
+NEXT_PUBLIC_SITE_URL=http://localhost:3000
+SUPABASE_SERVICE_ROLE_KEY=YOUR-SERVER-ONLY-SERVICE-ROLE-KEY
 ```
 
-Start the app:
+The anon/publishable key is intentionally available to the browser and is constrained by grants and RLS. `SUPABASE_SERVICE_ROLE_KEY` bypasses RLS and must remain server-only. Never commit it, expose it through a `NEXT_PUBLIC_` variable, place it in screenshots, or use it in browser code.
+
+The service role is used only by the authenticated admin API to invite, ban, unban, and synchronize Auth users. Ordinary application reads and writes use the signed-in user's session.
+
+## 4. Run locally
 
 ```bash
+npm install
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000). The Vessel, Role, and Member dropdowns should load, and changing the member should update the dashboard and available actions.
-
-In another terminal, run the deployment smoke test:
-
-```bash
-node scripts/verify-deployment.mjs \
-  --app http://localhost:3000 \
-  --supabase https://YOUR-PROJECT-REF.supabase.co \
-  --anon YOUR-PUBLISHABLE-OR-ANON-KEY
-```
-
-Continue only after it prints `All checks passed.` The test confirms that:
-
-- The app and session route respond.
-- Inactive and unknown users cannot start a session.
-- Anonymous access cannot read the main tables.
-- Supabase accepts the signed session token.
-- Captain and crew access stays within the correct vessel and assignment.
-- Unauthorized writes and forged tokens are rejected.
-
-## 4. Push the project to GitHub
-
-Create a public GitHub repository and push the project to it.
-
-Before committing, check the files Git will include:
-
-```bash
-git status
-```
-
-The repository should include `README.md`, `supabase/schema.sql`, `supabase/seed.sql`, and `.env.example`.
-
-It must not include:
-
-- `.env.local`
-- `node_modules`
-- `.next`
-- Any JWT, database, or service-role secret
-
-Open the repository in a private browser window to confirm that it is publicly accessible.
+Open `http://localhost:3000/login` and sign in with the invited administrator. Verify password recovery, sign-out, vessel selection, and all three role workflows with dedicated test accounts.
 
 ## 5. Deploy to Vercel
 
-1. Import the GitHub repository into Vercel.
-2. Keep the detected Next.js build settings.
-3. Add the following environment variables to the Production environment:
+1. Import the repository into Vercel.
+2. Add all four environment variables to Production.
+3. Set `NEXT_PUBLIC_SITE_URL` to the canonical HTTPS production URL.
+4. Deploy.
+5. Confirm the same URL is configured as the Supabase Auth Site URL and an allowed redirect URL.
 
-   | Name | Value |
-   | --- | --- |
-   | `NEXT_PUBLIC_SUPABASE_URL` | Supabase project URL |
-   | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase publishable or legacy anon key |
-   | `SUPABASE_JWT_SECRET` | Supabase legacy JWT secret |
+Schema changes are not automatically applied by a Vercel deployment. Apply the migration before deploying code that depends on it.
 
-4. Deploy the project.
+## 6. Verify production
 
-`SUPABASE_JWT_SECRET` must not have the `NEXT_PUBLIC_` prefix. Variables with that prefix are included in browser code during the Next.js build.
-
-If you change an environment variable later, redeploy the app so the new value is used.
-
-The assignment requires a public live URL. Make sure Vercel Authentication or password protection is not blocking the production domain.
-
-## 6. Verify the production deployment
-
-Run the same smoke test with the production URL:
+Use a dedicated, least-privileged test account:
 
 ```bash
 node scripts/verify-deployment.mjs \
   --app https://YOUR-APP.vercel.app \
   --supabase https://YOUR-PROJECT-REF.supabase.co \
-  --anon YOUR-PUBLISHABLE-OR-ANON-KEY
+  --anon YOUR-PUBLISHABLE-OR-ANON-KEY \
+  --email TEST-ACCOUNT@example.com \
+  --password TEST-ACCOUNT-PASSWORD
 ```
 
-Then open the production URL in a private browser window and check the main workflows:
+The script verifies protected-route redirection, login availability, anonymous denial, real Auth sign-in, profile mapping, and authenticated RLS reads. Never use a human user's credentials in CI.
 
-- The app opens without a login or invite.
-- The three dependent dropdowns load active vessels and members.
-- A captain can create an Open order and assign crew from the same vessel.
-- Crew only see their assigned orders and can move work from Open to In Progress, add a solution, and mark it Done.
-- A captain can attest or reject Done work, with a required rejection reason.
-- An admin can manage users, roles, vessels, and assignments.
-- Users cannot see work orders from vessels they are not assigned to.
-- The layout works on both desktop and mobile widths.
+Manually verify:
 
-## 7. Finish the submission
+- Invited users can choose a password and sign in.
+- Recovery links reach `/update-password`.
+- A captain sees only assigned vessels and can create/review work.
+- Crew see only their assigned work.
+- Admins can invite, update, deactivate, and reactivate users.
+- Deactivation blocks application access and bans the Auth account.
+- Signing out clears protected UI state and returns to `/login`.
 
-Confirm that the links at the top of `README.md` point to the public repository and production deployment. Commit and push any final documentation changes, then verify that Vercel deploys the latest commit.
+## 7. Secret rotation and recovery
 
-Your final submission should contain:
+If the service-role key is exposed, rotate it immediately in Supabase, update Vercel, and redeploy. Review Auth and database logs for misuse.
 
-- Public GitHub repository URL
-- Live production URL
-- ERD in `README.md`
-- Complete database schema in `supabase/schema.sql`
-
-## Troubleshooting
-
-| Problem | What to check |
-| --- | --- |
-| Dropdowns are empty | Confirm the project URL and publishable/anon key, and make sure both SQL files completed successfully. |
-| Session creation fails | Confirm all three environment variables exist and the selected user is active. Check the `/api/session` Vercel logs. |
-| Data fails after selecting a member | Supabase may be rejecting the signed JWT. Recopy the legacy JWT secret, restart locally or redeploy, and run the smoke test again. |
-| Works locally but not on Vercel | Check the Production environment variables and redeploy after any change. |
-| Vercel asks the reviewer to sign in | Disable deployment authentication or password protection for the production domain. |
-| Supabase returns permission errors | Recreate a fresh project and rerun `schema.sql` followed by `seed.sql`. |
-| The site stops working after inactivity | Check whether the Supabase project is paused and restore it if needed. |
-
-## Secret safety
-
-The publishable or legacy anon key is designed for public clients and is restricted by grants and RLS. The JWT secret is different: anyone who has it can create trusted session tokens.
-
-Never place `SUPABASE_JWT_SECRET` in source code, a screenshot, an email, or a committed environment file. If it is exposed, rotate or replace it immediately, update Vercel, and redeploy.
+Database backups do not replace Auth and configuration recovery planning. Periodically test database restoration and document how Auth settings, redirect URLs, SMTP, and environment variables are recreated.

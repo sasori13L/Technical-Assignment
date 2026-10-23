@@ -1,7 +1,7 @@
 'use client';
 
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
-import { Pencil, Plus, Power, Search, X } from 'lucide-react';
+import { MailPlus, Pencil, Plus, Power, Search, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { useSession } from '@/components/session/SessionProvider';
@@ -72,9 +72,20 @@ export function UsersPanel() {
     }
   }
 
+  async function invite(u: UserWithVessels) {
+    try {
+      await createUser({ full_name: u.full_name, email: u.email, role: u.role });
+      toast.success(`Invitation sent to ${u.email}.`);
+    } catch (e) {
+      toast.error(errorMessage(e));
+    } finally {
+      refresh();
+    }
+  }
+
   return (
     <>
-      <PageHeader title="Users" description="Create people, set their role and deactivate them when they leave. Users are never deleted, so history stays intact."
+      <PageHeader title="Users" description="Invite people, set their role and deactivate them when they leave. Users are never deleted, so history stays intact."
         actions={<Button data-testid="new-user" onClick={() => setCreating(true)}><Plus className="size-4" aria-hidden /> New user</Button>} />
 
       <div className="overflow-hidden rounded-xl bg-white shadow-sm">
@@ -135,6 +146,7 @@ export function UsersPanel() {
                       <td className="px-4 py-3"><ActiveBadge active={u.is_active} /></td>
                       <td className="px-4 py-3">
                         <div className="flex justify-end gap-1">
+                          {!u.auth_user_id && <Button variant="ghost" size="sm" onClick={() => void invite(u)} aria-label={`Invite ${u.full_name}`}><MailPlus className="size-3.5" aria-hidden /> Invite</Button>}
                           <Button variant="ghost" size="sm" onClick={() => setEditing(u)} aria-label={`Edit ${u.full_name}`}><Pencil className="size-3.5" aria-hidden /> Edit</Button>
                           <Button variant="ghost" size="sm" onClick={() => setToggling(u)}
                             aria-label={`${u.is_active ? 'Deactivate' : 'Reactivate'} ${u.full_name}`}>
@@ -163,6 +175,7 @@ export function UsersPanel() {
                         value={u.role} disabled={u.id === activeUser?.id} onChange={(e) => void changeRole(u, e.target.value as UserRole)}>
                         {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
                       </select>
+                      {!u.auth_user_id && <Button variant="secondary" size="sm" onClick={() => void invite(u)}><MailPlus className="size-3.5" aria-hidden /> Invite</Button>}
                       <Button variant="secondary" size="sm" onClick={() => setEditing(u)}><Pencil className="size-3.5" aria-hidden /> Edit</Button>
                       <Button variant="secondary" size="sm" onClick={() => setToggling(u)}><Power className="size-3.5" aria-hidden /> {u.is_active ? 'Deactivate' : 'Reactivate'}</Button>
                     </div>
@@ -175,7 +188,7 @@ export function UsersPanel() {
       </div>
 
       <UserFormModal open={creating} onClose={() => setCreating(false)}
-        onSubmit={async (v) => { await createUser(v); toast.success(`${v.full_name} was created.`); refresh(); setCreating(false); }} />
+        onSubmit={async (v) => { await createUser(v); toast.success(`Invitation sent to ${v.email}.`); refresh(); setCreating(false); }} />
       <UserFormModal open={!!editing} user={editing} onClose={() => setEditing(null)}
         onSubmit={async (v) => {
           await updateUser(editing!.id, { full_name: v.full_name, email: v.email });
@@ -184,8 +197,8 @@ export function UsersPanel() {
       <ConfirmDialog open={!!toggling} danger={!!toggling?.is_active}
         title={toggling?.is_active ? `Deactivate ${toggling.full_name}?` : `Reactivate ${toggling?.full_name}?`}
         message={toggling?.is_active
-          ? 'They will disappear from the member dropdown and can no longer act. Their history is kept. This is refused if it would strand active work.'
-          : 'They will appear in the member dropdown again.'}
+          ? 'Their login will be disabled and they can no longer act. Their history is kept. This is refused if it would strand active work.'
+          : 'Their login and application access will be restored.'}
         confirmLabel={toggling?.is_active ? 'Deactivate' : 'Reactivate'}
         onClose={() => setToggling(null)}
         onConfirm={async () => {

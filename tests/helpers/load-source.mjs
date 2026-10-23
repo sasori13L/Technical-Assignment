@@ -52,7 +52,7 @@ export function queryClient(answer) {
       maybeSingle: () => execute(),
       single: () => execute(),
     };
-    for (const method of ['select', 'update', 'insert', 'eq', 'neq', 'is', 'not', 'or', 'in', 'order', 'range', 'abortSignal']) {
+    for (const method of ['select', 'update', 'insert', 'eq', 'neq', 'is', 'not', 'or', 'in', 'order', 'range', 'limit', 'abortSignal']) {
       builder[method] = (...values) => { operations.push([method, ...values]); return builder; };
     }
     return builder;

@@ -1,21 +1,17 @@
-import { getSwitcherSupabase } from '@/lib/supabase/client';
-import { readAllRows } from './common';
-import type { SwitcherMember, SwitcherVessel, UserRole } from '@/lib/types';
+import { getSupabase } from '@/lib/supabase/client';
+import { unwrap } from '@/lib/errors';
+import type { AppUser, SessionVessel } from '@/lib/types';
 
-// Anonymous, read-only RPCs. They return only ids, names and roles of active records.
-
-export async function fetchSwitcherVessels(signal?: AbortSignal): Promise<SwitcherVessel[]> {
-  return readAllRows<SwitcherVessel>((from, to) => {
-    const query = getSwitcherSupabase().rpc('switcher_vessels').order('name').order('id').range(from, to);
-    return signal ? query.abortSignal(signal) : query;
-  });
+/** The signed-in application profile linked to auth.uid(). */
+export async function fetchCurrentProfile(signal?: AbortSignal): Promise<AppUser | null> {
+  let query = getSupabase().from('users').select('*').limit(1);
+  if (signal) query = query.abortSignal(signal);
+  return unwrap(await query.maybeSingle()) as AppUser | null;
 }
 
-export async function fetchSwitcherMembers(vesselId: string | null, role: UserRole, signal?: AbortSignal): Promise<SwitcherMember[]> {
-  if (role !== 'Admin' && !vesselId) return [];
-  return readAllRows<SwitcherMember>((from, to) => {
-    const query = getSwitcherSupabase().rpc('switcher_members', { p_vessel_id: vesselId, p_role: role })
-      .order('full_name').order('id').range(from, to);
-    return signal ? query.abortSignal(signal) : query;
-  });
+/** RLS returns every active vessel an admin may see, or only assigned vessels. */
+export async function fetchSessionVessels(signal?: AbortSignal): Promise<SessionVessel[]> {
+  let query = getSupabase().from('vessels').select('id, name, vessel_type').eq('is_active', true).order('name').order('id');
+  if (signal) query = query.abortSignal(signal);
+  return (unwrap(await query) ?? []) as SessionVessel[];
 }

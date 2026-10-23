@@ -19,7 +19,7 @@ interface Props {
 export function UserFormModal({ open, user, onClose, onSubmit }: Props) {
   return (
     <Modal open={open} onClose={onClose} title={user ? 'Edit user' : 'New user'}
-      description={user ? 'Update name and email.' : 'Create a user. They can be assigned to vessels afterwards.'}>
+      description={user ? 'Update name and sign-in email.' : 'Invite a user by email. They can choose a password and then be assigned to vessels.'}>
       {open && <UserForm key={user?.id ?? 'new'} user={user ?? null} onClose={onClose} onSubmit={onSubmit} />}
     </Modal>
   );
@@ -69,7 +69,7 @@ function UserForm({ user, onClose, onSubmit }: Omit<Props, 'open'>) {
       {formError && <p role="alert" className="rounded-md bg-rose-50 px-3 py-2 text-sm text-rose-700">{formError}</p>}
       <div className="flex justify-end gap-2 pt-1">
         <Button variant="secondary" onClick={onClose}>Cancel</Button>
-        <Button type="submit" loading={busy}>{user ? 'Save changes' : 'Create user'}</Button>
+        <Button type="submit" loading={busy}>{user ? 'Save changes' : 'Send invitation'}</Button>
       </div>
     </form>
   );

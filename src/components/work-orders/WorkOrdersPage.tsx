@@ -23,7 +23,7 @@ const PAGE_SIZE = 10;
 
 /** Role-aware entry point. Everything below it is keyed to the active user and vessel, so switching resets all local state. */
 export function WorkOrdersPage() {
-  const { activeUser, loading, vesselId, vessels, role } = useSession();
+  const { activeUser, loading, vesselId, vessels } = useSession();
   const vesselName = vessels.find((v) => v.id === vesselId)?.name ?? '';
 
   if (loading) {
@@ -33,9 +33,9 @@ export function WorkOrdersPage() {
     return (
       <div className="rounded-xl bg-white shadow-sm">
         <EmptyState
-          title={vesselId ? `No active ${role} on this vessel` : 'No vessels available'}
+          title={vesselId ? 'No access to this vessel' : 'No vessels available'}
           description={activeUser?.role === 'Admin' && !vesselId
-            ? 'Create a vessel or reactivate one to get started.' : 'Pick another role or vessel in the bar at the top.'}
+            ? 'Create a vessel or reactivate one to get started.' : 'Ask an administrator to assign your account to an active vessel.'}
           action={activeUser?.role === 'Admin' && !vesselId
             ? <Link href="/admin/vessels" className="inline-flex min-h-10 items-center rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700">Manage vessels</Link>
             : undefined} />

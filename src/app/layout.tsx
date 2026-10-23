@@ -1,8 +1,7 @@
 import type { Metadata, Viewport } from 'next';
 import type { ReactNode } from 'react';
 import { AppProviders } from '@/components/providers/AppProviders';
-import { AppNav } from '@/components/layout/AppNav';
-import { UtilityBar } from '@/components/layout/UtilityBar';
+import { AppShell } from '@/components/layout/AppShell';
 import './globals.css';
 
 export const metadata: Metadata = {
@@ -20,9 +19,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           Skip to main content
         </a>
         <AppProviders>
-          <UtilityBar />
-          <AppNav />
-          <main id="main" tabIndex={-1} className="mx-auto max-w-7xl px-3 py-5 outline-none sm:px-4 sm:py-6">{children}</main>
+          <AppShell>{children}</AppShell>
         </AppProviders>
       </body>
     </html>

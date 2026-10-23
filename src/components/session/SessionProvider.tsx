@@ -2,49 +2,24 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { setActiveUser } from '@/lib/auth/token';
-import { ROLES, type SwitcherMember, type SwitcherVessel, type UserRole } from '@/lib/types';
-import { fetchSwitcherMembers, fetchSwitcherVessels } from '@/services/switcher';
-
-interface Selection {
-  vesselId: string | null;
-  role: UserRole;
-  memberId: string | null;
-}
+import { useRouter } from 'next/navigation';
+import { getSupabase } from '@/lib/supabase/client';
+import { advanceSessionGeneration } from '@/lib/auth/session';
+import type { AppUser, SessionVessel } from '@/lib/types';
+import { fetchCurrentProfile, fetchSessionVessels } from '@/services/switcher';
 
 interface SessionValue {
-  vessels: SwitcherVessel[];
-  members: SwitcherMember[];
+  vessels: SessionVessel[];
   vesselId: string | null;
-  role: UserRole;
-  /** The mock user the whole app is currently acting as, or null while loading / when nobody matches. */
-  activeUser: SwitcherMember | null;
+  activeUser: AppUser | null;
   loading: boolean;
   error: string | null;
   retry: () => void;
   selectVessel: (id: string) => void;
-  selectRole: (role: UserRole) => void;
-  selectMember: (id: string) => void;
+  signOut: () => Promise<void>;
 }
 
-const STORAGE_KEY = 'mwo.selection.v1';
-const DEFAULT_SELECTION: Selection = { vesselId: null, role: 'Admin', memberId: null };
-
-function loadSelection(): Selection {
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return DEFAULT_SELECTION;
-    const parsed = JSON.parse(raw) as Partial<Selection>;
-    return {
-      vesselId: typeof parsed.vesselId === 'string' ? parsed.vesselId : null,
-      role: ROLES.includes(parsed.role as UserRole) ? (parsed.role as UserRole) : 'Admin',
-      memberId: typeof parsed.memberId === 'string' ? parsed.memberId : null,
-    };
-  } catch {
-    return DEFAULT_SELECTION;
-  }
-}
-
+const STORAGE_PREFIX = 'fleetops.vessel.v1';
 const SessionContext = createContext<SessionValue | null>(null);
 
 export function useSession(): SessionValue {
@@ -54,120 +29,100 @@ export function useSession(): SessionValue {
 }
 
 export function SessionProvider({ children }: { children: ReactNode }) {
+  const router = useRouter();
   const queryClient = useQueryClient();
-  const [selection, setSelection] = useState<Selection>(DEFAULT_SELECTION);
-  const [hydrated, setHydrated] = useState(false);
-  const [committedSession, setCommittedSession] = useState<string | null>(null);
+  const [authUserId, setAuthUserId] = useState<string | null>(null);
+  const [authReady, setAuthReady] = useState(false);
+  const [vesselId, setVesselId] = useState<string | null>(null);
 
-  const clearSession = useCallback(() => {
-    setActiveUser(null);
-    setCommittedSession(null);
-    const filters = { predicate: (q: { queryKey: readonly unknown[] }) => q.queryKey[0] !== 'switcher' };
-    void queryClient.cancelQueries(filters);
-    queryClient.removeQueries(filters);
+  const clearProtectedState = useCallback(() => {
+    advanceSessionGeneration();
+    void queryClient.cancelQueries();
+    queryClient.clear();
+    setVesselId(null);
   }, [queryClient]);
 
-  // Restore the last selection (client only, so server and first client render match).
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setSelection(loadSelection());
-    setHydrated(true);
-  }, []);
+    const supabase = getSupabase();
+    let alive = true;
+    void supabase.auth.getSession().then(({ data }) => {
+      if (!alive) return;
+      setAuthUserId(data.session?.user.id ?? null);
+      setAuthReady(true);
+    });
+    const { data: listener } = supabase.auth.onAuthStateChange((event, session) => {
+      const nextId = session?.user.id ?? null;
+      setAuthUserId((current) => {
+        if (current !== nextId) clearProtectedState();
+        return nextId;
+      });
+      setAuthReady(true);
+      if (event === 'SIGNED_OUT') router.replace('/login');
+    });
+    return () => { alive = false; listener.subscription.unsubscribe(); };
+  }, [clearProtectedState, router]);
 
-  useEffect(() => {
-    if (!hydrated) return;
-    try { window.localStorage.setItem(STORAGE_KEY, JSON.stringify(selection)); } catch { /* storage unavailable */ }
-  }, [selection, hydrated]);
+  const profile = useQuery({
+    queryKey: ['session', 'profile', authUserId],
+    queryFn: ({ signal }) => fetchCurrentProfile(signal),
+    enabled: authReady && !!authUserId,
+    retry: false,
+  });
+  const activeUser = profile.data ?? null;
 
   const vesselsQuery = useQuery({
-    queryKey: ['switcher', 'vessels'],
-    queryFn: ({ signal }) => fetchSwitcherVessels(signal),
-    enabled: hydrated,
+    queryKey: ['session', 'vessels', activeUser?.id],
+    queryFn: ({ signal }) => fetchSessionVessels(signal),
+    enabled: !!activeUser,
   });
-  const vessels = vesselsQuery.data;
-  // Only trust a vessel id (possibly restored from storage) once the server has listed it.
-  const vesselValid = !!vessels?.some((v) => v.id === selection.vesselId);
+  const vessels = useMemo(() => vesselsQuery.data ?? [], [vesselsQuery.data]);
 
-  // Dropdown 1: make sure the selected vessel exists, defaulting to the first one.
   useEffect(() => {
-    if (!vessels) return;
-    if (selection.vesselId && vessels.some((v) => v.id === selection.vesselId)) return;
+    if (!activeUser || !vesselsQuery.data) return;
+    const key = `${STORAGE_PREFIX}.${activeUser.id}`;
+    let stored: string | null = null;
+    try { stored = window.localStorage.getItem(key); } catch { /* storage unavailable */ }
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setSelection((s) => s.vesselId === (vessels[0]?.id ?? null) ? s
-      : { ...s, vesselId: vessels[0]?.id ?? null, memberId: null });
-  }, [vessels, selection.vesselId]);
+    setVesselId((current) => {
+      if (current && vessels.some((v) => v.id === current)) return current;
+      if (stored && vessels.some((v) => v.id === stored)) return stored;
+      return vessels[0]?.id ?? null;
+    });
+  }, [activeUser, vessels, vesselsQuery.data]);
 
-  // Dropdowns 2 and 3: members of the chosen role on the chosen vessel.
-  const membersQuery = useQuery({
-    queryKey: ['switcher', 'members', selection.vesselId, selection.role],
-    queryFn: ({ signal }) => fetchSwitcherMembers(selection.vesselId, selection.role, signal),
-    enabled: hydrated && (selection.role === 'Admin' || vesselValid),
-  });
-  const members = !vesselsQuery.isError && !membersQuery.isError
-    && (selection.role === 'Admin' || vesselValid) ? membersQuery.data : undefined;
+  const selectVessel = useCallback((id: string) => {
+    if (!activeUser || !vessels.some((v) => v.id === id)) return;
+    setVesselId(id);
+    try { window.localStorage.setItem(`${STORAGE_PREFIX}.${activeUser.id}`, id); } catch { /* storage unavailable */ }
+  }, [activeUser, vessels]);
 
-  // Auto-pick the first member when the current choice is not in the list.
-  useEffect(() => {
-    if (!members) return;
-    if (selection.memberId && members.some((m) => m.id === selection.memberId)) return;
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setSelection((s) => ({ ...s, memberId: members[0]?.id ?? null }));
-  }, [members, selection.memberId]);
-
-  const candidate = members?.find((m) => m.id === selection.memberId) ?? null;
-  const sessionKey = candidate
-    ? JSON.stringify([selection.vesselId, selection.role, candidate.id, candidate.role, candidate.full_name]) : null;
-  const candidateId = candidate?.id ?? null;
-
-  // Expose a user only after the matching token source is committed. Errors and
-  // mismatched cached selections cannot keep the previous account actionable.
-  useEffect(() => {
-    if (committedSession === sessionKey) return;
-    // Commit the external token source and React identity together after query resolution.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    clearSession();
-    setActiveUser(candidateId);
-    setCommittedSession(sessionKey);
-  }, [sessionKey, candidateId, committedSession, clearSession]);
-
-  const activeUser = sessionKey && committedSession === sessionKey ? candidate : null;
-
-  const selectVessel = useCallback(
-    (id: string) => { clearSession(); setSelection((s) => ({ ...s, vesselId: id, memberId: null })); },
-    [clearSession],
-  );
-  const selectRole = useCallback(
-    (role: UserRole) => { clearSession(); setSelection((s) => ({ ...s, role, memberId: null })); },
-    [clearSession],
-  );
-  const selectMember = useCallback((id: string) => {
-    clearSession();
-    setSelection((s) => ({ ...s, memberId: id }));
-  }, [clearSession]);
   const retry = useCallback(() => {
-    void vesselsQuery.refetch();
-    if (selection.role === 'Admin' || vesselValid) void membersQuery.refetch();
-  }, [vesselsQuery, membersQuery, selection.role, vesselValid]);
+    void profile.refetch();
+    if (activeUser) void vesselsQuery.refetch();
+  }, [profile, activeUser, vesselsQuery]);
+
+  const signOut = useCallback(async () => {
+    await getSupabase().auth.signOut();
+    clearProtectedState();
+    router.replace('/login');
+    router.refresh();
+  }, [clearProtectedState, router]);
 
   const value = useMemo<SessionValue>(() => {
-    const error = vesselsQuery.error ?? membersQuery.error;
+    const error = profile.error ?? vesselsQuery.error;
     return {
-      vessels: vessels ?? [],
-      members: members ?? [],
-      vesselId: selection.vesselId,
-      role: selection.role,
+      vessels,
+      vesselId,
       activeUser,
-      loading: !hydrated || vesselsQuery.isPending
-        || ((selection.role === 'Admin' || vesselValid) && membersQuery.isPending)
-        || (!!candidate && !activeUser),
-      error: error ? error.message : null,
+      loading: !authReady || (!!authUserId && profile.isPending) || (!!activeUser && vesselsQuery.isPending),
+      error: error ? error.message : authReady && authUserId && profile.data === null
+        ? 'Your login is not linked to an active FleetOps profile. Contact an administrator.' : null,
       retry,
       selectVessel,
-      selectRole,
-      selectMember,
+      signOut,
     };
-  }, [vessels, members, selection, activeUser, hydrated, vesselValid, vesselsQuery.isPending, vesselsQuery.error,
-      membersQuery.isPending, membersQuery.error, candidate, retry, selectVessel, selectRole, selectMember]);
+  }, [vessels, vesselId, activeUser, authReady, authUserId, profile.isPending, profile.error, profile.data,
+      vesselsQuery.isPending, vesselsQuery.error, retry, selectVessel, signOut]);
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;
 }

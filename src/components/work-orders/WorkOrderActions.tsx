@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/Button';
 import { Field, controlClass } from '@/components/ui/Field';
 import { useToast } from '@/components/ui/Toast';
 import { errorMessage } from '@/lib/errors';
-import { getSessionGeneration } from '@/lib/auth/token';
+import { getSessionGeneration } from '@/lib/auth/session';
 import type { SwitcherMember, WorkOrderRow } from '@/lib/types';
 import { rejectionSchema, solutionSchema, type WorkOrderInput } from '@/lib/validation';
 import { listVesselCrew } from '@/services/assignments';

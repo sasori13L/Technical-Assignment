@@ -4,63 +4,17 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { loadSource, queryClient } from './helpers/load-source.mjs';
 
-const response = (token) => ({ ok: true, json: async () => ({ token, expiresAt: Date.now() + 3_600_000 }) });
-const deferred = () => {
-  let resolve;
-  let reject;
-  const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
-  return { promise, resolve, reject };
-};
-
-test('a late token from a previous selection is rejected, including A → B → A', async () => {
-  const pending = deferred();
-  const auth = loadSource('src/lib/auth/token.ts', { globals: { fetch: () => pending.promise } });
-  auth.setActiveUser('A');
-  const old = assert.rejects(auth.getAccessToken(), /session changed/);
-  auth.setActiveUser('B');
-  auth.setActiveUser('A');
-  pending.resolve(response('old-A-token'));
-  await old;
-});
-
-test('concurrent token reads share a request and a valid token is cached', async () => {
-  let requests = 0;
-  const auth = loadSource('src/lib/auth/token.ts', { globals: { fetch: async () => {
-    requests++; return response('current-token');
-  } } });
-  auth.setActiveUser('A');
-  assert.deepEqual(await Promise.all([auth.getAccessToken(), auth.getAccessToken()]), ['current-token', 'current-token']);
-  assert.equal(await auth.getAccessToken(), 'current-token');
-  assert.equal(requests, 1);
-  auth.setActiveUser(null);
-  assert.equal(await auth.getAccessToken(), null);
-});
-
-test('failed token requests can be retried without retaining a rejected promise', async () => {
-  let requests = 0;
-  const auth = loadSource('src/lib/auth/token.ts', { globals: { fetch: async () => {
-    if (++requests === 1) throw new Error('offline');
-    return response('retry-token');
-  } } });
-  auth.setActiveUser('A');
-  await assert.rejects(auth.getAccessToken(), /offline/);
-  assert.equal(await auth.getAccessToken(), 'retry-token');
-});
-
-test('Admin member lookup works without a vessel and uses the public client', async () => {
-  const db = queryClient(({ args, operations }) => {
-    assert.equal(args.p_vessel_id, null);
-    assert.equal(args.p_role, 'Admin');
-    const from = operations.find(([name]) => name === 'range')[1];
-    return { data: from === 0 ? [{ id: 'admin', full_name: 'Admin', role: 'Admin' }] : [], error: null };
-  });
+test('session bootstrap loads the authenticated profile and RLS-visible vessels', async () => {
+  const db = queryClient(({ table }) => table === 'users'
+    ? { data: { id: 'admin', auth_user_id: 'auth-admin', full_name: 'Admin', email: 'admin@example.com', role: 'Admin', is_active: true }, error: null }
+    : { data: [{ id: 'vessel', name: 'Pacific Dawn', vessel_type: 'Container' }], error: null });
   const service = loadSource('src/services/switcher.ts', { mocks: {
-    '@/lib/supabase/client': { getSwitcherSupabase: () => db.client, getSupabase: () => { throw new Error('Must not use the old user token'); } },
+    '@/lib/supabase/client': { getSupabase: () => db.client },
   } });
-  assert.equal((await service.fetchSwitcherMembers(null, 'Admin'))[0].id, 'admin');
-  assert.deepEqual(await service.fetchSwitcherMembers(null, 'Crew'), []);
-  assert.deepEqual(await service.fetchSwitcherMembers(null, 'Captain'), []);
-  assert.equal(db.calls.length, 2); // one populated page and one empty terminal page
+  assert.equal((await service.fetchCurrentProfile()).auth_user_id, 'auth-admin');
+  assert.equal((await service.fetchSessionVessels())[0].id, 'vessel');
+  assert.ok(db.calls[0].operations.some(([name]) => name === 'limit'));
+  assert.ok(db.calls[1].operations.some((op) => op[0] === 'eq' && op[1] === 'is_active' && op[2] === true));
 });
 
 test('complete-list reads handle server row caps smaller than the requested range', async () => {

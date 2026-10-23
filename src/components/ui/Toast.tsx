@@ -2,7 +2,7 @@
 
 import { CheckCircle2, XCircle } from 'lucide-react';
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react';
-import { getSessionGeneration } from '@/lib/auth/token';
+import { getSessionGeneration } from '@/lib/auth/session';
 
 type Kind = 'success' | 'error';
 interface ToastItem { id: number; kind: Kind; message: string }

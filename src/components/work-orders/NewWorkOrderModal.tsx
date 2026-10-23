@@ -6,7 +6,7 @@ import { useToast } from '@/components/ui/Toast';
 import { listVesselCrew } from '@/services/assignments';
 import { createWorkOrder } from '@/services/workOrders';
 import { WorkOrderForm } from './WorkOrderForm';
-import { getSessionGeneration } from '@/lib/auth/token';
+import { getSessionGeneration } from '@/lib/auth/session';
 
 interface Props {
   open: boolean;

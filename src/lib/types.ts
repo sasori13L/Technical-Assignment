@@ -9,6 +9,7 @@ export type VesselType = (typeof VESSEL_TYPES)[number];
 
 export interface AppUser {
   id: string;
+  auth_user_id: string | null;
   full_name: string;
   email: string;
   role: UserRole;
@@ -68,12 +69,14 @@ export interface WorkOrderEvent {
   actor: Named;
 }
 
-/** What the anonymous switcher RPCs return: just enough to fill the dropdowns. */
-export interface SwitcherVessel {
+/** Compact user shape consumed by role-aware work-order components. */
+export interface SessionVessel {
   id: string;
   name: string;
   vessel_type: VesselType;
 }
+
+export type SwitcherVessel = SessionVessel;
 
 export interface SwitcherMember {
   id: string;

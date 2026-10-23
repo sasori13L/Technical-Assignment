@@ -8,17 +8,11 @@ FleetOps is a small marine work order dashboard built with Next.js, TypeScript, 
 - Demo data: [`supabase/seed.sql`](supabase/seed.sql)
 - Deployment guide: [`DEPLOYMENT.md`](DEPLOYMENT.md)
 
-## How the demo works
+## Authentication and demo accounts
 
-There is no email login. The sticky bar at the top acts as a mock session switcher:
+FleetOps uses Supabase Auth with email/password sessions. An administrator invites each user, and the invitation lets the user choose their password. After signing in, the sticky bar shows the real application profile and lets users choose among the active vessels they are authorized to access.
 
-1. Choose a vessel.
-2. Choose a role: Admin, Captain, or Crew.
-3. Choose an active member.
-
-The available members and the rest of the dashboard update based on those selections. Admins can work across all vessels, while captains and crew only see vessels assigned to them.
-
-Some useful demo accounts:
+The seed creates the following application profiles. Invite the desired email from Supabase Auth or from the Users screen to create and link its login:
 
 | Vessel | Role | Member | What to try |
 | --- | --- | --- | --- |
@@ -77,6 +71,7 @@ Every work order includes:
 
 ```mermaid
 erDiagram
+    AUTH_USERS ||--o| USERS : authenticates
     USERS ||--o{ VESSEL_ASSIGNMENTS : has
     VESSELS ||--o{ VESSEL_ASSIGNMENTS : has
     VESSELS ||--o{ WORK_ORDERS : contains
@@ -88,6 +83,7 @@ erDiagram
 
     USERS {
         uuid id PK
+        uuid auth_user_id FK
         text full_name
         text email UK
         user_role role
@@ -146,9 +142,9 @@ The complete table definitions, constraints, indexes, triggers, grants, and RLS 
 
 ## Security and data rules
 
-Most data fetching and updates happen in the browser through the Supabase client. The only server route is `/api/session`, which creates a short-lived JWT for the selected demo user.
+Most data fetching and updates happen in the browser through the cookie-aware Supabase client. Supabase Auth issues and refreshes sessions; `public.users.auth_user_id` maps `auth.uid()` to the stable domain user referenced by work orders and audit history. The server-only admin route uses the service role solely for Auth invitations and account administration.
 
-Supabase Row Level Security uses that token to enforce access:
+Supabase Row Level Security uses the verified Auth identity to enforce access:
 
 | Role | Access |
 | --- | --- |
@@ -158,7 +154,7 @@ Supabase Row Level Security uses that token to enforce access:
 
 Database constraints and triggers also enforce the status flow, required solutions and rejection reasons, valid vessel assignments, duplicate prevention, and deactivation rules. The `work_order_events` table keeps an append-only history of work order changes.
 
-Because this project intentionally uses mock authentication, anyone who can use the member switcher can act as an active demo user. A production version should replace this with Supabase Auth. The Supabase anon key cannot read the main tables on its own; it can only call the limited functions needed to fill the switcher.
+The anon key cannot read application tables. Deactivating a profile also bans its linked Auth account; historical references remain intact.
 
 Lists are paginated and cached, and the main database access paths are indexed. The interface uses tables on larger screens and cards on smaller screens so the same workflows remain usable on desktop, tablet, and mobile.
 
@@ -170,7 +166,7 @@ Lists are paginated and cached, and the main database access paths are indexed. 
 - TanStack Query
 - Tailwind CSS
 - Zod
-- `jose` for demo session tokens
+- `@supabase/ssr` for cookie-based browser and server sessions
 
 ## Run locally
 
@@ -195,10 +191,13 @@ Copy `.env.example` to `.env.local` and add:
 ```bash
 NEXT_PUBLIC_SUPABASE_URL=https://YOUR-PROJECT-REF.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=YOUR-ANON-KEY
-SUPABASE_JWT_SECRET=YOUR-LEGACY-JWT-SECRET
+NEXT_PUBLIC_SITE_URL=http://localhost:3000
+SUPABASE_SERVICE_ROLE_KEY=YOUR-SERVER_ONLY_SERVICE_ROLE_KEY
 ```
 
-`SUPABASE_JWT_SECRET` is server-only and must not use the `NEXT_PUBLIC_` prefix. This demo signs HS256 tokens, so the Supabase project's legacy JWT secret must be enabled.
+`SUPABASE_SERVICE_ROLE_KEY` is server-only and must never use the `NEXT_PUBLIC_` prefix. It is used only by the protected admin invitation endpoint.
+
+In Supabase Auth URL Configuration, set the Site URL and allow `http://localhost:3000/**`. Invite at least one seeded Admin email from the Supabase Auth dashboard; the database trigger links the new Auth user to the matching profile automatically. For an existing mock-auth deployment, apply `supabase/migrations/20261023000000_supabase_auth.sql` first.
 
 ### 3. Install and start
 
@@ -226,7 +225,9 @@ For a fuller manual checklist, see [`test-cases.md`](test-cases.md). The deploym
 node scripts/verify-deployment.mjs \
   --app <app-url> \
   --supabase <project-url> \
-  --anon <anon-key>
+  --anon <anon-key> \
+  --email <test-account> \
+  --password <test-password>
 ```
 
 ## Project structure
@@ -246,4 +247,4 @@ tests/            application regression tests
 
 ## Deployment
 
-The app is deployed on Vercel. To deploy another copy, import the repository and add the same three environment variables used locally. Keep `SUPABASE_JWT_SECRET` server-only. See [`DEPLOYMENT.md`](DEPLOYMENT.md) for the full setup and troubleshooting notes.
+The app is deployed on Vercel. To deploy another copy, import the repository and add the four environment variables used locally. Keep `SUPABASE_SERVICE_ROLE_KEY` server-only. See [`DEPLOYMENT.md`](DEPLOYMENT.md) for the full setup and migration notes.

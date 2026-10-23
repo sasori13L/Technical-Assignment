@@ -4,17 +4,15 @@
 -- project, then run supabase/seed.sql for demo data.
 --
 -- Security model (see README for the full explanation)
---   * No Supabase Auth. A small Next.js route signs a short-lived JWT for the
---     selected mock user: { role: "authenticated", app_user_id: "<uuid>" }.
---   * The browser Supabase client sends that JWT. Every RLS policy reads the
---     acting user through public.app_user_id().
---   * The anon role has no table access. It can only call three read-only
---     "switcher" RPCs that return the minimum needed to fill the dropdowns.
+--   * Supabase Auth owns credentials, sessions and token refresh.
+--   * public.users.auth_user_id links Auth identities to stable domain ids.
+--   * Every RLS policy resolves auth.uid() through public.app_user_id().
+--   * The anon role has no application-table or application-RPC access.
 --   * Business rules (status flow, deactivation guards, duplicates) live in
 --     triggers, so they hold no matter which client writes the data.
 --
 -- Sections: 1 types, 2 identity helpers, 3 tables, 4 indexes, 5 helper
--- functions, 6 triggers, 7 switcher RPCs, 8 RLS policies, 9 grants.
+-- functions, 7 triggers, 8 RLS policies, 9 grants.
 -- =============================================================================
 
 create extension if not exists pg_trgm with schema extensions;
@@ -37,7 +35,7 @@ returns jsonb language sql stable as $$
   select coalesce(nullif(current_setting('request.jwt.claims', true), ''), '{}')::jsonb
 $$;
 
--- The acting mock user, or NULL when the request carries no app_user_id claim.
+-- Temporary seed-compatible definition, replaced after public.users exists.
 create function public.app_user_id()
 returns uuid language sql stable as $$
   select case
@@ -61,6 +59,7 @@ $$;
 -- -----------------------------------------------------------------------------
 create table public.users (
   id          uuid primary key default gen_random_uuid(),
+  auth_user_id uuid references auth.users (id) on delete restrict,
   full_name   text not null,
   email       text not null,
   role        public.user_role not null,
@@ -70,6 +69,21 @@ create table public.users (
   constraint users_full_name_len check (char_length(btrim(full_name)) between 2 and 100),
   constraint users_email_format  check (char_length(email) <= 254 and email ~* '^[^@\s]+@[^@\s]+\.[^@\s]+$')
 );
+
+-- Resolve the verified Auth subject to the stable application id. The legacy
+-- claim fallback works only for trusted seed sessions that have no API role.
+create or replace function public.app_user_id()
+returns uuid language sql stable security definer set search_path = '' as $$
+  select coalesce(
+    (select u.id from public.users u
+     where u.auth_user_id = (select auth.uid()) and u.is_active),
+    case when public.app_claims() ->> 'role' is null
+      and (public.app_claims() ->> 'app_user_id')
+          ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+      then (public.app_claims() ->> 'app_user_id')::uuid
+    end
+  )
+$$;
 
 create table public.vessels (
   id           uuid primary key default gen_random_uuid(),
@@ -138,6 +152,7 @@ create table public.work_order_events (
 -- -----------------------------------------------------------------------------
 -- Duplicate prevention
 create unique index users_email_lower_key on public.users (lower(email));
+create unique index users_auth_user_key on public.users (auth_user_id) where auth_user_id is not null;
 create unique index vessels_name_lower_key on public.vessels (lower(name));
 create unique index vessels_imo_number_key on public.vessels (imo_number);
 
@@ -580,40 +595,21 @@ create trigger work_orders_after_write
   for each row execute function public.work_orders_after_write();
 
 -- -----------------------------------------------------------------------------
--- 7. Switcher RPCs (the only thing the anon role can call)
---    Return the bare minimum to fill the three dropdowns: no emails, no
---    inactive users, no inactive vessels.
+-- 7. Supabase Auth profile linking
+--    Inviting an existing seeded profile by the same email links it safely.
 -- -----------------------------------------------------------------------------
-create function public.switcher_vessels()
-returns table (id uuid, name text, vessel_type text)
-language sql stable security definer set search_path = public as $$
-  select v.id, v.name, v.vessel_type from public.vessels v where v.is_active order by v.name
-$$;
+create function public.link_auth_user_to_profile()
+returns trigger language plpgsql security definer set search_path = '' as $$
+begin
+  update public.users
+  set auth_user_id = new.id
+  where auth_user_id is null and lower(email) = lower(new.email);
+  return new;
+end $$;
 
-create function public.switcher_members(p_vessel_id uuid, p_role public.user_role)
-returns table (id uuid, full_name text, role public.user_role)
-language sql stable security definer set search_path = public as $$
-  select u.id, u.full_name, u.role
-  from public.users u
-  where u.is_active
-    and u.role = p_role
-    and (
-      p_role = 'Admin'
-      or exists (
-        select 1
-        from public.vessel_assignments a
-        join public.vessels v on v.id = a.vessel_id
-        where a.user_id = u.id and a.vessel_id = p_vessel_id and v.is_active)
-    )
-  order by u.full_name
-$$;
-
--- Used by the token route to confirm the chosen user exists and is active.
-create function public.switcher_user(p_user_id uuid)
-returns table (id uuid, full_name text, role public.user_role)
-language sql stable security definer set search_path = public as $$
-  select u.id, u.full_name, u.role from public.users u where u.id = p_user_id and u.is_active
-$$;
+create trigger auth_user_created_link_profile
+  after insert on auth.users
+  for each row execute function public.link_auth_user_to_profile();
 
 -- -----------------------------------------------------------------------------
 -- 8. Row Level Security
@@ -709,8 +705,3 @@ grant execute on function
   public.my_vessel_ids(), public.my_captain_vessel_ids(), public.my_colleague_ids()
   to authenticated;
 
-grant execute on function
-  public.switcher_vessels(),
-  public.switcher_members(uuid, public.user_role),
-  public.switcher_user(uuid)
-  to anon, authenticated;

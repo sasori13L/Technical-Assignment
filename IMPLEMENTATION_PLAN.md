@@ -1,5 +1,7 @@
 # Implementation Plan: Marine Work Order Management System
 
+> Historical note: this file records the original assessment build plan. The mock-session design described below has since been replaced by real Supabase Auth. `README.md`, `DEPLOYMENT.md`, and `supabase/migrations/20261023000000_supabase_auth.sql` describe the current implementation.
+
 Stack: Next.js (App Router) + TypeScript + Supabase (Postgres, RLS) + Tailwind, deployed on Vercel.
 
 ## Phase outline

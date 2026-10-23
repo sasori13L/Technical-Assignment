@@ -12,7 +12,7 @@ import { Modal } from '@/components/ui/Modal';
 import { SearchSelect, type PickerOption } from '@/components/ui/SearchSelect';
 import { EmptyState, ErrorState, SkeletonRows } from '@/components/ui/States';
 import { useToast } from '@/components/ui/Toast';
-import { getSessionGeneration } from '@/lib/auth/token';
+import { getSessionGeneration } from '@/lib/auth/session';
 import { errorMessage } from '@/lib/errors';
 import type { AssignmentWithUser, Vessel } from '@/lib/types';
 import { addAssignment, listAssignments, moveAssignment, removeAssignment } from '@/services/assignments';
