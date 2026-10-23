@@ -704,4 +704,3 @@ grant execute on function
   public.current_app_role(), public.is_admin(),
   public.my_vessel_ids(), public.my_captain_vessel_ids(), public.my_colleague_ids()
   to authenticated;
-

@@ -11,9 +11,10 @@ test('session bootstrap loads the authenticated profile and RLS-visible vessels'
   const service = loadSource('src/services/switcher.ts', { mocks: {
     '@/lib/supabase/client': { getSupabase: () => db.client },
   } });
-  assert.equal((await service.fetchCurrentProfile()).auth_user_id, 'auth-admin');
+  assert.equal((await service.fetchCurrentProfile('auth-admin')).auth_user_id, 'auth-admin');
   assert.equal((await service.fetchSessionVessels())[0].id, 'vessel');
   assert.ok(db.calls[0].operations.some(([name]) => name === 'limit'));
+  assert.ok(db.calls[0].operations.some((op) => op[0] === 'eq' && op[1] === 'auth_user_id' && op[2] === 'auth-admin'));
   assert.ok(db.calls[1].operations.some((op) => op[0] === 'eq' && op[1] === 'is_active' && op[2] === true));
 });
 

@@ -3,8 +3,8 @@ import { unwrap } from '@/lib/errors';
 import type { AppUser, SessionVessel } from '@/lib/types';
 
 /** The signed-in application profile linked to auth.uid(). */
-export async function fetchCurrentProfile(signal?: AbortSignal): Promise<AppUser | null> {
-  let query = getSupabase().from('users').select('*').limit(1);
+export async function fetchCurrentProfile(authUserId: string, signal?: AbortSignal): Promise<AppUser | null> {
+  let query = getSupabase().from('users').select('*').eq('auth_user_id', authUserId).limit(1);
   if (signal) query = query.abortSignal(signal);
   return unwrap(await query.maybeSingle()) as AppUser | null;
 }

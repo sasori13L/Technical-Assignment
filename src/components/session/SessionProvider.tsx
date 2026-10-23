@@ -64,7 +64,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   const profile = useQuery({
     queryKey: ['session', 'profile', authUserId],
-    queryFn: ({ signal }) => fetchCurrentProfile(signal),
+    queryFn: ({ signal }) => fetchCurrentProfile(authUserId!, signal),
     enabled: authReady && !!authUserId,
     retry: false,
   });
